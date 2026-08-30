@@ -1,0 +1,11 @@
+Hi {username},
+
+Thanks for signing up for Piecehunt! Please confirm your email address by visiting the link below.
+
+{verification_link}
+
+This link is valid for 1 hour.
+If you did not create a Piecehunt account, you can ignore this email.
+
+---
+This is an automated message. Please do not reply to this email.

@@ -1,0 +1,13 @@
+PieceHunt – App Feedback Report
+================================
+
+Type:         {feedback_type}
+User:         {user_email}
+Log attached: {logs_attached}
+
+Description
+-----------
+{description}
+
+---
+Automatically sent from the PieceHunt app.

@@ -1,0 +1,10 @@
+Welcome to Piecehunt!
+
+Hi {username},
+
+Your account has been successfully created.
+
+You can now log in and start using Piecehunt.
+
+---
+This is an automated message. Please do not reply to this email.

@@ -1,0 +1,10 @@
+Hi {username},
+
+This is the last email you will receive from Piecehunt.
+
+Your account and all associated data will be permanently deleted from our systems.
+
+We're sorry to see you go. You are always welcome to create a new account in the future.
+
+---
+This is an automated message. Please do not reply to this email.

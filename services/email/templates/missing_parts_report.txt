@@ -1,0 +1,12 @@
+Hi {username},
+
+Please find attached your Missing Parts Report.
+
+Unique missing parts: {part_count}
+Sets included: {set_count}
+Spare parts: {spares_note}
+
+Time to hunt for those missing pieces!
+
+---
+This is an automated message. Please do not reply to this email.
