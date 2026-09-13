@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, func, select, tuple_
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from database import get_db
 from dependencies import get_current_verified_user
 from models.models import (
+    Elements,
     Inventories,
     InventoryMinifigs,
     InventoryParts,
@@ -97,44 +99,72 @@ def get_set_status(
 
 @router.post("/{set_num}")
 def add_user_set(
-    set_num: str, user=Depends(get_current_verified_user), db: Session = Depends(get_db)
+    set_num: str,
+    user=Depends(get_current_verified_user),
+    db: Session = Depends(get_db),
 ):
     """Creates a UserSets row + all UserSetParts (set + every minifig's parts)."""
 
     normalized_set_num = f"{set_num}-1"
 
     set_obj = db.query(Sets).filter_by(set_num=normalized_set_num).first()
+
     if not set_obj:
-        raise HTTPException(status_code=404, detail=f"Set: {set_num} not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Set: {set_num} not found",
+        )
 
     already_added = (
         db.query(UserSets)
-        .filter_by(user_id=user.id, set_num=normalized_set_num)
+        .filter_by(
+            user_id=user.id,
+            set_num=normalized_set_num,
+        )
         .first()
     )
-    if already_added:
-        raise HTTPException(status_code=409, detail=f"Set: {set_num} is already added")
 
-    active_inventory = _get_active_inventory(db, normalized_set_num)
+    if already_added:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Set: {set_num} is already added",
+        )
+
+    active_inventory = _get_active_inventory(
+        db,
+        normalized_set_num,
+    )
+
     if not active_inventory:
-        raise HTTPException(status_code=404, detail="No inventory found for this set")
+        raise HTTPException(
+            status_code=404,
+            detail="No inventory found for this set",
+        )
 
     try:
-        new_set = UserSets(user_id=user.id, set_num=normalized_set_num)
+        new_set = UserSets(
+            user_id=user.id,
+            set_num=normalized_set_num,
+        )
+
         db.add(new_set)
         db.flush()
 
         db.add_all(
             _iter_user_set_parts(
-                new_set.id, active_inventory.inventory_parts, inv_id=active_inventory.id
+                new_set.id,
+                active_inventory.inventory_parts,
+                inv_id=active_inventory.id,
             )
         )
 
         minifig_list = []
+
         for minifig in active_inventory.inventory_minifigs:
             minifig_inventory = db.scalar(
                 select(Inventories).where(Inventories.set_num == minifig.fig_num)
             )
+
             if minifig_inventory:
                 db.add_all(
                     _iter_user_set_parts(
@@ -144,36 +174,76 @@ def add_user_set(
                         minifig_num=minifig.fig_num,
                     )
                 )
+
             minifig_list.append(minifig.fig_num)
 
         db.commit()
 
     except SQLAlchemyError as e:
         db.rollback()
-        logger.exception(
-            "Failed to add set %s for user %s", normalized_set_num, user.id
-        )
-        raise HTTPException(status_code=500, detail="Error while saving set") from e
 
-    # Haal img_urls op uit de image-tabellen
+        logger.exception(
+            "Failed to add set %s for user %s",
+            normalized_set_num,
+            user.id,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Error while saving set",
+        ) from e
+
     part_keys = [(p.part_num, p.color_id) for p in active_inventory.inventory_parts]
+
     part_images = {}
+
     if part_keys:
         rows = db.execute(
-            select(PartImages.part_num, PartImages.color_id, PartImages.img_url).where(
-                tuple_(PartImages.part_num, PartImages.color_id).in_(part_keys)
+            select(
+                PartImages.part_num,
+                PartImages.color_id,
+                PartImages.img_url,
+            ).where(
+                tuple_(
+                    PartImages.part_num,
+                    PartImages.color_id,
+                ).in_(part_keys)
             )
         ).all()
+
         part_images = {(r.part_num, r.color_id): r.img_url for r in rows}
 
-    fig_nums = [f for f in minifig_list]
-    minifig_images = {}
-    if fig_nums:
+    element_ids_map = defaultdict(list)
+
+    if part_keys:
         rows = db.execute(
-            select(MinifigImages.fig_num, MinifigImages.img_url).where(
-                MinifigImages.fig_num.in_(fig_nums)
+            select(
+                Elements.part_num,
+                Elements.color_id,
+                Elements.element_id,
+            ).where(
+                tuple_(
+                    Elements.part_num,
+                    Elements.color_id,
+                ).in_(part_keys)
             )
         ).all()
+
+        for part_num, color_id, element_id in rows:
+            element_ids_map[(part_num, color_id)].append(element_id)
+
+    fig_nums = [f for f in minifig_list]
+
+    minifig_images = {}
+
+    if fig_nums:
+        rows = db.execute(
+            select(
+                MinifigImages.fig_num,
+                MinifigImages.img_url,
+            ).where(MinifigImages.fig_num.in_(fig_nums))
+        ).all()
+
         minifig_images = {r.fig_num: r.img_url for r in rows}
 
     set_img_url = db.execute(
@@ -185,9 +255,14 @@ def add_user_set(
             "part_num": p.part_num,
             "color_id": p.color_id,
             "img_url": part_images.get((p.part_num, p.color_id)),
+            "element_ids": element_ids_map.get(
+                (p.part_num, p.color_id),
+                [],
+            ),
         }
         for p in active_inventory.inventory_parts
     ]
+
     minifigs = [
         {
             "fig_num": fig_num,
@@ -196,11 +271,18 @@ def add_user_set(
         for fig_num in minifig_list
     ]
 
-    logger.info("Set %s added for user %s", normalized_set_num, user.id)
+    logger.info(
+        "Set %s added for user %s",
+        normalized_set_num,
+        user.id,
+    )
 
     return {
         "user_set_id": new_set.id,
-        "set": {"set_num": set_obj.set_num, "name": set_obj.name},
+        "set": {
+            "set_num": set_obj.set_num,
+            "name": set_obj.name,
+        },
         "set_img_url": set_img_url,
         "parts": parts,
         "minifigs": minifigs,
