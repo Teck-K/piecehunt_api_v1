@@ -150,13 +150,15 @@ def add_user_set(
         db.add(new_set)
         db.flush()
 
-        user_set_parts = _iter_user_set_parts(
-            new_set.id,
-            active_inventory.inventory_parts,
-            inv_id=active_inventory.id,
-        )
+        user_set_parts = []
 
-        db.add_all(user_set_parts)
+        user_set_parts.extend(
+            _iter_user_set_parts(
+                new_set.id,
+                active_inventory.inventory_parts,
+                inv_id=active_inventory.id,
+            )
+        )
 
         minifig_list = []
 
@@ -166,18 +168,20 @@ def add_user_set(
             )
 
             if minifig_inventory:
-                minifig_parts = _iter_user_set_parts(
-                    new_set.id,
-                    minifig_inventory.inventory_parts,
-                    inv_id=active_inventory.id,
-                    minifig_num=minifig.fig_num,
+                minifig_parts = list(
+                    _iter_user_set_parts(
+                        new_set.id,
+                        minifig_inventory.inventory_parts,
+                        inv_id=active_inventory.id,
+                        minifig_num=minifig.fig_num,
+                    )
                 )
 
                 user_set_parts.extend(minifig_parts)
-                db.add_all(minifig_parts)
 
             minifig_list.append(minifig.fig_num)
 
+        db.add_all(user_set_parts)
         db.commit()
 
     except SQLAlchemyError as e:
