@@ -150,13 +150,13 @@ def add_user_set(
         db.add(new_set)
         db.flush()
 
-        db.add_all(
-            _iter_user_set_parts(
-                new_set.id,
-                active_inventory.inventory_parts,
-                inv_id=active_inventory.id,
-            )
+        user_set_parts = _iter_user_set_parts(
+            new_set.id,
+            active_inventory.inventory_parts,
+            inv_id=active_inventory.id,
         )
+
+        db.add_all(user_set_parts)
 
         minifig_list = []
 
@@ -166,14 +166,15 @@ def add_user_set(
             )
 
             if minifig_inventory:
-                db.add_all(
-                    _iter_user_set_parts(
-                        new_set.id,
-                        minifig_inventory.inventory_parts,
-                        inv_id=active_inventory.id,
-                        minifig_num=minifig.fig_num,
-                    )
+                minifig_parts = _iter_user_set_parts(
+                    new_set.id,
+                    minifig_inventory.inventory_parts,
+                    inv_id=active_inventory.id,
+                    minifig_num=minifig.fig_num,
                 )
+
+                user_set_parts.extend(minifig_parts)
+                db.add_all(minifig_parts)
 
             minifig_list.append(minifig.fig_num)
 
@@ -193,7 +194,7 @@ def add_user_set(
             detail="Error while saving set",
         ) from e
 
-    part_keys = [(p.part_num, p.color_id) for p in active_inventory.inventory_parts]
+    part_keys = list({(p.part_num, p.color_id) for p in user_set_parts})
 
     part_images = {}
 
@@ -232,7 +233,7 @@ def add_user_set(
         for part_num, color_id, element_id in rows:
             element_ids_map[(part_num, color_id)].append(element_id)
 
-    fig_nums = [f for f in minifig_list]
+    fig_nums = list(minifig_list)
 
     minifig_images = {}
 
@@ -260,7 +261,7 @@ def add_user_set(
                 [],
             ),
         }
-        for p in active_inventory.inventory_parts
+        for p in user_set_parts
     ]
 
     minifigs = [
