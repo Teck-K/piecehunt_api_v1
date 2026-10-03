@@ -22,7 +22,16 @@ ALLOWED_REPORT_TYPES = {
     "image/jpeg",
     "image/webp",
 }
-ALLOWED_REPORT_EXTENSIONS = {".pdf", ".xls", ".xlsx", ".png", ".jpg", ".jpeg", ".webp"}
+ALLOWED_REPORT_EXTENSIONS = {
+    ".pdf",
+    ".xls",
+    ".xlsx",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".csv",
+}
 
 
 async def _read_validated_report_file(file: UploadFile) -> bytes:
@@ -36,7 +45,7 @@ async def _read_validated_report_file(file: UploadFile) -> bytes:
     ):
         raise HTTPException(
             status_code=415,
-            detail="Unsupported file type. Allowed: PDF, XLS, XLSX, PNG, JPG, JPEG, WEBP.",
+            detail="Unsupported file type. Allowed: PDF, XLS, XLSX, PNG, JPG, JPEG, WEBP, CSV.",
         )
 
     contents = await file.read()
