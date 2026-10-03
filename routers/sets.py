@@ -2,7 +2,7 @@ import logging
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import case, func, select, tuple_
+from sqlalchemy import case, func, insert, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -61,6 +61,28 @@ def _iter_user_set_parts(user_set_id, parts, inv_id, minifig_num=None):
         )
 
 
+def _chunks(items, size=500):
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
+def _build_part_rows(user_set_id, parts, minifig_inv_id=None, minifig_num=None):
+    """Plain dicts voor een bulk insert (geen ORM-objecten)."""
+    return [
+        {
+            "user_set_id": user_set_id,
+            "inventory_id": part.inventory_id,
+            "part_num": part.part_num,
+            "color_id": part.color_id,
+            "is_spare": part.is_spare,
+            "quantity_have": 0,
+            "minifig_num": minifig_num,
+            "minifig_id": minifig_inv_id if minifig_num else None,
+        }
+        for part in parts
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Existing: set status check
 # ---------------------------------------------------------------------------
@@ -108,148 +130,100 @@ def add_user_set(
     normalized_set_num = f"{set_num}-1"
 
     set_obj = db.query(Sets).filter_by(set_num=normalized_set_num).first()
-
     if not set_obj:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Set: {set_num} not found",
-        )
+        raise HTTPException(status_code=404, detail=f"Set: {set_num} not found")
 
     already_added = (
         db.query(UserSets)
-        .filter_by(
-            user_id=user.id,
-            set_num=normalized_set_num,
-        )
+        .filter_by(user_id=user.id, set_num=normalized_set_num)
         .first()
     )
-
     if already_added:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Set: {set_num} is already added",
-        )
+        raise HTTPException(status_code=409, detail=f"Set: {set_num} is already added")
 
-    active_inventory = _get_active_inventory(
-        db,
-        normalized_set_num,
-    )
-
+    active_inventory = _get_active_inventory(db, normalized_set_num)
     if not active_inventory:
-        raise HTTPException(
-            status_code=404,
-            detail="No inventory found for this set",
-        )
+        raise HTTPException(status_code=404, detail="No inventory found for this set")
+
+    set_info = {"set_num": set_obj.set_num, "name": set_obj.name}
+    user_id = user.id
+    active_inventory_id = active_inventory.id
+
+    minifig_list = [m.fig_num for m in active_inventory.inventory_minifigs]
 
     try:
-        new_set = UserSets(
-            user_id=user.id,
-            set_num=normalized_set_num,
-        )
-
+        new_set = UserSets(user_id=user_id, set_num=normalized_set_num)
         db.add(new_set)
         db.flush()
+        new_set_id = new_set.id
 
-        user_set_parts = []
+        rows = _build_part_rows(new_set_id, active_inventory.inventory_parts)
 
-        user_set_parts.extend(
-            _iter_user_set_parts(
-                new_set.id,
-                active_inventory.inventory_parts,
-                inv_id=active_inventory.id,
-            )
-        )
+        minifig_invs = {}
+        if minifig_list:
+            invs = db.scalars(
+                select(Inventories)
+                .options(selectinload(Inventories.inventory_parts))
+                .where(Inventories.set_num.in_(minifig_list))
+                .order_by(Inventories.version)
+            ).all()
+            for inv in invs:
+                minifig_invs[inv.set_num] = inv
 
-        minifig_list = []
-
-        for minifig in active_inventory.inventory_minifigs:
-            minifig_inventory = db.scalar(
-                select(Inventories).where(Inventories.set_num == minifig.fig_num)
-            )
-
+        for fig_num in minifig_list:
+            minifig_inventory = minifig_invs.get(fig_num)
             if minifig_inventory:
-                minifig_parts = list(
-                    _iter_user_set_parts(
-                        new_set.id,
+                rows.extend(
+                    _build_part_rows(
+                        new_set_id,
                         minifig_inventory.inventory_parts,
-                        inv_id=active_inventory.id,
-                        minifig_num=minifig.fig_num,
+                        minifig_inv_id=active_inventory_id,
+                        minifig_num=fig_num,
                     )
                 )
 
-                user_set_parts.extend(minifig_parts)
-
-            minifig_list.append(minifig.fig_num)
-
-        db.add_all(user_set_parts)
+        if rows:
+            db.execute(insert(UserSetParts), rows)  # bulk insert
         db.commit()
 
     except SQLAlchemyError as e:
         db.rollback()
-
         logger.exception(
-            "Failed to add set %s for user %s",
-            normalized_set_num,
-            user.id,
+            "Failed to add set %s for user %s", normalized_set_num, user_id
         )
+        raise HTTPException(status_code=500, detail="Error while saving set") from e
 
-        raise HTTPException(
-            status_code=500,
-            detail="Error while saving set",
-        ) from e
-
-    part_keys = list({(p.part_num, p.color_id) for p in user_set_parts})
+    part_keys = {(r["part_num"], r["color_id"]) for r in rows}
+    part_nums = list({pn for pn, _ in part_keys})
 
     part_images = {}
-
-    if part_keys:
-        rows = db.execute(
-            select(
-                PartImages.part_num,
-                PartImages.color_id,
-                PartImages.img_url,
-            ).where(
-                tuple_(
-                    PartImages.part_num,
-                    PartImages.color_id,
-                ).in_(part_keys)
-            )
-        ).all()
-
-        part_images = {(r.part_num, r.color_id): r.img_url for r in rows}
-
     element_ids_map = defaultdict(list)
 
-    if part_keys:
-        rows = db.execute(
-            select(
-                Elements.part_num,
-                Elements.color_id,
-                Elements.element_id,
-            ).where(
-                tuple_(
-                    Elements.part_num,
-                    Elements.color_id,
-                ).in_(part_keys)
+    for chunk in _chunks(part_nums):
+        for r in db.execute(
+            select(PartImages.part_num, PartImages.color_id, PartImages.img_url).where(
+                PartImages.part_num.in_(chunk)
             )
-        ).all()
+        ):
+            if (r.part_num, r.color_id) in part_keys:
+                part_images[(r.part_num, r.color_id)] = r.img_url
 
-        for part_num, color_id, element_id in rows:
-            element_ids_map[(part_num, color_id)].append(element_id)
-
-    fig_nums = list(minifig_list)
+        for r in db.execute(
+            select(Elements.part_num, Elements.color_id, Elements.element_id).where(
+                Elements.part_num.in_(chunk)
+            )
+        ):
+            if (r.part_num, r.color_id) in part_keys:
+                element_ids_map[(r.part_num, r.color_id)].append(r.element_id)
 
     minifig_images = {}
-
-    if fig_nums:
-        rows = db.execute(
-            select(
-                MinifigImages.fig_num,
-                MinifigImages.img_url,
-            ).where(MinifigImages.fig_num.in_(fig_nums))
-        ).all()
-
-        minifig_images = {r.fig_num: r.img_url for r in rows}
+    for chunk in _chunks(minifig_list):
+        for r in db.execute(
+            select(MinifigImages.fig_num, MinifigImages.img_url).where(
+                MinifigImages.fig_num.in_(chunk)
+            )
+        ):
+            minifig_images[r.fig_num] = r.img_url
 
     set_img_url = db.execute(
         select(SetImages.img_url).where(SetImages.set_num == normalized_set_num)
@@ -257,37 +231,24 @@ def add_user_set(
 
     parts = [
         {
-            "part_num": p.part_num,
-            "color_id": p.color_id,
-            "img_url": part_images.get((p.part_num, p.color_id)),
-            "element_ids": element_ids_map.get(
-                (p.part_num, p.color_id),
-                [],
-            ),
+            "part_num": r["part_num"],
+            "color_id": r["color_id"],
+            "img_url": part_images.get((r["part_num"], r["color_id"])),
+            "element_ids": element_ids_map.get((r["part_num"], r["color_id"]), []),
         }
-        for p in user_set_parts
+        for r in rows
     ]
 
     minifigs = [
-        {
-            "fig_num": fig_num,
-            "img_url": minifig_images.get(fig_num),
-        }
+        {"fig_num": fig_num, "img_url": minifig_images.get(fig_num)}
         for fig_num in minifig_list
     ]
 
-    logger.info(
-        "Set %s added for user %s",
-        normalized_set_num,
-        user.id,
-    )
+    logger.info("Set %s added for user %s", normalized_set_num, user_id)
 
     return {
-        "user_set_id": new_set.id,
-        "set": {
-            "set_num": set_obj.set_num,
-            "name": set_obj.name,
-        },
+        "user_set_id": new_set_id,
+        "set": set_info,
         "set_img_url": set_img_url,
         "parts": parts,
         "minifigs": minifigs,
