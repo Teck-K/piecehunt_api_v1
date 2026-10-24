@@ -276,6 +276,16 @@ class SetImages(Base):
     set: Mapped[Sets] = relationship("Sets")
 
 
+class ImageStatus(Base):
+    __tablename__ = "image_status"
+
+    r2_key: Mapped[str] = mapped_column(primary_key=True)
+    source_url: Mapped[str] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(server_default=current_timestamp())
+    last_error: Mapped[str] = mapped_column(nullable=True)
+
+
 # following are the user columns
 
 

@@ -5,26 +5,29 @@ These replace direct Supabase client calls from the app.
 """
 
 import logging
-import os
 
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr
+
+from config import SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 # Supabase configuration
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 
-if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
     raise RuntimeError(
-        "Missing SUPABASE_URL or SUPABASE_ANON_KEY environment variables"
+        "Missing SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY environment variables"
     )
 
 SUPABASE_AUTH_URL = f"{SUPABASE_URL}/auth/v1"
+
+# The publishable key is not a JWT, so it must only be sent as the `apikey`
+# header, never as an `Authorization: Bearer` token.
+AUTH_HEADERS = {"apikey": SUPABASE_PUBLISHABLE_KEY}
 
 
 # Pydantic models
@@ -86,7 +89,7 @@ async def login(body: LoginRequest):
                     "email": body.email,
                     "password": body.password,
                 },
-                headers={"apikey": SUPABASE_ANON_KEY},
+                headers=AUTH_HEADERS,
                 timeout=10.0,
             )
             response.raise_for_status()
@@ -144,7 +147,7 @@ async def register(body: RegisterRequest):
                     "email": body.email,
                     "password": body.password,
                 },
-                headers={"apikey": SUPABASE_ANON_KEY},
+                headers=AUTH_HEADERS,
                 timeout=10.0,
             )
             response.raise_for_status()
@@ -214,7 +217,7 @@ async def refresh(body: RefreshRequest):
             response = await client.post(
                 f"{SUPABASE_AUTH_URL}/token?grant_type=refresh_token",
                 json={"refresh_token": body.refresh_token},
-                headers={"apikey": SUPABASE_ANON_KEY},
+                headers=AUTH_HEADERS,
                 timeout=10.0,
             )
             response.raise_for_status()
