@@ -6,11 +6,6 @@ from dotenv import load_dotenv
 load_dotenv()  # leest .env in bij lokale development; op de server staan de vars al in de omgeving
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
-SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-SUPABASE_JWT_SECRET = os.environ[
-    "SUPABASE_JWT_SECRET"
-]  # nieuw: voor lokale tokenverificatie
 SUPABASE_PUBLISHABLE_KEY = os.environ["SUPABASE_PUBLISHABLE_KEY"]
 SUPABASE_SECRET_KEY = os.environ["SUPABASE_SECRET_KEY"]
 
