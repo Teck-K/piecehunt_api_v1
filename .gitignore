@@ -18,3 +18,7 @@ env/
 
 # OS
 .DS_Store
+
+# LOGS
+*.log
+update_log.txt
